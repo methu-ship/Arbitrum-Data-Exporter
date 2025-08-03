@@ -8,45 +8,35 @@ use tokio;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create Prometheus gauges for gas price and latest block
     let gas_metric = Gauge::new("arbitrum_gas_price_gwei", "Current Arbitrum Gas Price in Gwei")?;
     let block_metric = Gauge::new("arbitrum_latest_block", "Latest Arbitrum Block Number")?;
-
-    // Registry to hold the metrics
     let registry = Registry::new();
     registry.register(Box::new(gas_metric.clone()))?;
     registry.register(Box::new(block_metric.clone()))?;
 
-    // Read Arbitrum RPC URL from environment variable named "RPC_URL"
-    let rpc_url = env::var("RPC_URL")?;
 
-    // Connect to Arbitrum node provider
+    let rpc_url = env::var("RPC_URL")?;
     let provider = Provider::<Http>::try_from(rpc_url)?;
 
-    // Clone providers and metrics for use in update loop
     let provider_metrics = provider.clone();
     let gas_metric_clone = gas_metric.clone();
     let block_metric_clone = block_metric.clone();
 
-    // Async loop to update Prometheus metrics every 15 seconds
-    let update_metrics = async move {
+    
+    let update_metrics = async move { // Async loop to update Prometheus metrics every 15 seconds
         loop {
             if let Ok(block) = provider_metrics.get_block_number().await {
                 block_metric_clone.set(block.as_u64() as f64);
             }
             if let Ok(gas_price) = provider_metrics.get_gas_price().await {
-                // Convert wei to gwei
                 let gas_gwei = gas_price.as_u64() as f64 / 1e9;
                 gas_metric_clone.set(gas_gwei);
             }
             tokio::time::sleep(std::time::Duration::from_secs(15)).await;
         }
-        // technically unreachable, but required for type compatibility
         #[allow(unreachable_code)]
         Ok::<(), Box<dyn std::error::Error>>(())
     };
-
-    // Create HTTP service to expose the /metrics endpoint for Prometheus scraping
     let make_svc = make_service_fn(move |_conn| {
         let registry = registry.clone();
         async move {
@@ -79,17 +69,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Define socket address, listen on all interfaces port 8000
+   
     let addr = ([0, 0, 0, 0], 8000).into();
-
-    // Build server future
     let server = Server::bind(&addr).serve(make_svc);
 
     println!("Serving Prometheus metrics on http://{}", addr);
 
-    // Run both the metrics update loop and HTTP server concurrently
+    
     tokio::try_join!(
-        update_metrics,
+        update_metrics,    // Run both the metrics update loop and HTTP server concurrently
         async {
             if let Err(e) = server.await {
                 eprintln!("Server error: {}", e);
